@@ -24,7 +24,7 @@
   "homepage": "https://github.com/ArsenVlasov/domein_registry#readme",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^3.0.0",
-    "hardhat": "^2.17.3"
+    "hardhat": "^2.17.4"
   },
   "dependencies": {
     "dotenv": "^16.3.1",

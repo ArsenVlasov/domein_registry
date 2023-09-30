@@ -25,6 +25,7 @@ contract DomainRegistry is Ownable {
     function reserveDomain(string memory domainName, uint256 initialDeposit) public payable {
         require(msg.value >= initialDeposit, "Insufficient initial deposit");
         require(domains[domainName].controller == address(0), "Domain already reserved");
+        require(isTopLevelDomain(domainName), "Domain name must be a top-level domain");
 
         domains[domainName] = Domain({
             controller: msg.sender,
@@ -34,6 +35,16 @@ contract DomainRegistry is Ownable {
         totalReservedDomains++;
         
         emit DomainReserved(domainName, msg.sender, initialDeposit);
+    }
+
+    function isTopLevelDomain(string memory domainName) private pure returns (bool) {
+    bytes memory domainBytes = bytes(domainName);
+    for(uint i = 0; i < domainBytes.length; i++) {
+        if(domainBytes[i] == '.') {
+            return false;
+        }
+    }
+    return true;
     }
 
     function changeDeposit(string memory domainName, uint256 newDeposit) public payable {

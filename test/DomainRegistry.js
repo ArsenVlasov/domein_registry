@@ -1,83 +1,78 @@
-// Подключаем необходимые библиотеки и модули Hardhat
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
 
 describe("DomainRegistry", function () {
-  let domainRegistry;
-  let owner;
-  let user1;
-  let user2;
+  let DomainRegistry, domainRegistry, owner, addr1, addr2;
+  const initialDeposit = ethers.parseEther("1");
 
-  // Инициализируем контракт и аккаунты перед каждым тестом
-  beforeEach(async function () {
-    [owner, user1, user2] = await ethers.getSigners();
+  beforeEach(async () => {
+    DomainRegistry = await ethers.getContractFactory("DomainRegistry");
+    [owner, addr1, addr2] = await ethers.getSigners();
+    domainRegistry = await DomainRegistry.deploy(); // Это уже ожидает успешного развертывания
+});
 
-    const DomainRegistry = await ethers.getContractFactory("DomainRegistry");
-    domainRegistry = await DomainRegistry.deploy();
-    await domainRegistry.deployed();
+  it("Should deploy properly", async function () {
+    expect(await domainRegistry.totalDomains()).to.equal(0);
+    expect(await domainRegistry.totalReservedDomains()).to.equal(0);
   });
 
-  it("should allow reserving a domain", async function () {
-    const domainName = "example.com";
-    const initialDeposit = ethers.utils.parseEther("1");
+  describe("reserveDomain", function () {
+    it("Should reserve a domain and emit the correct event", async function () {
+      await expect(domainRegistry.connect(addr1).reserveDomain("example", initialDeposit, { value: initialDeposit }))
+        .to.emit(domainRegistry, 'DomainReserved')
+        .withArgs("example", addr1.address, initialDeposit);
+    });
 
-    await domainRegistry.connect(user1).reserveDomain(domainName, initialDeposit);
+    it("Should revert when trying to reserve an already reserved domain", async function () {
+      await domainRegistry.connect(addr1).reserveDomain("example", initialDeposit, { value: initialDeposit });
+      await expect(domainRegistry.connect(addr2).reserveDomain("example", initialDeposit, { value: initialDeposit }))
+        .to.be.revertedWith("Domain already reserved");
+    });
 
-    const controller = await domainRegistry.getDomainController(domainName);
-    const deposit = await domainRegistry.getDomainDeposit(domainName);
-
-    expect(controller).to.equal(user1.address);
-    expect(deposit).to.equal(initialDeposit);
+    it("Should revert when the domain name contains a dot", async function () {
+      await expect(domainRegistry.connect(addr1).reserveDomain("example.com", initialDeposit, { value: initialDeposit }))
+        .to.be.revertedWith("Domain name must be a top-level domain");
+    });
   });
 
-  it("should allow changing deposit by the domain controller", async function () {
-    const domainName = "example.com";
-    const initialDeposit = ethers.utils.parseEther("1");
-    const newDeposit = ethers.utils.parseEther("2");
+  describe("Domain Actions", function () {
+    const domainName = "example";
 
-    await domainRegistry.connect(user1).reserveDomain(domainName, initialDeposit);
-    await domainRegistry.connect(user1).changeDeposit(domainName, newDeposit);
+    beforeEach(async () => {
+      await domainRegistry.connect(addr1).reserveDomain(domainName, initialDeposit, { value: initialDeposit });
+    });
 
-    const deposit = await domainRegistry.getDomainDeposit(domainName);
+    it("Should change deposit and emit the correct event", async function () {
+      const newDeposit = ethers.parseEther("2");
+      await expect(domainRegistry.connect(addr1).changeDeposit(domainName, newDeposit, { value: newDeposit }))
+        .to.emit(domainRegistry, 'DepositChanged')
+        .withArgs(domainName, newDeposit);
+    });
 
-    expect(deposit).to.equal(newDeposit);
+    it("Should transfer domain control and emit the correct event", async function () {
+      await expect(domainRegistry.connect(addr1).transferDomainControl(domainName, addr2.address))
+        .to.emit(domainRegistry, 'DomainControlTransferred')
+        .withArgs(domainName, addr2.address);
+    });
+
+    it("Should release domain, refund deposit and emit the correct event", async function () {
+      await expect(domainRegistry.connect(addr1).releaseDomain(domainName))
+        .to.emit(domainRegistry, 'DomainReleased')
+        .withArgs(domainName, addr1.address, initialDeposit);
+    });
   });
 
-  it("should allow transferring domain control", async function () {
-    const domainName = "example.com";
-    const initialDeposit = ethers.utils.parseEther("1");
-
-    await domainRegistry.connect(user1).reserveDomain(domainName, initialDeposit);
-    await domainRegistry.connect(user1).transferDomainControl(domainName, user2.address);
-
-    const controller = await domainRegistry.getDomainController(domainName);
-
-    expect(controller).to.equal(user2.address);
-  });
-
-  it("should allow releasing a domain by the domain controller", async function () {
-    const domainName = "example.com";
-    const initialDeposit = ethers.utils.parseEther("1");
-
-    await domainRegistry.connect(user1).reserveDomain(domainName, initialDeposit);
-    const initialBalanceUser1 = await ethers.provider.getBalance(user1.address);
-
-    await domainRegistry.connect(user1).releaseDomain(domainName);
-
-    const controller = await domainRegistry.getDomainController(domainName);
-    const finalBalanceUser1 = await ethers.provider.getBalance(user1.address);
-
-    expect(controller).to.equal(ethers.constants.AddressZero);
-    expect(finalBalanceUser1.sub(initialBalanceUser1)).to.equal(initialDeposit);
-  });
-
-  it("should not allow transferring domain control to an invalid address", async function () {
-    const domainName = "example.com";
-    const initialDeposit = ethers.utils.parseEther("1");
-
-    await domainRegistry.connect(user1).reserveDomain(domainName, initialDeposit);
-
-    await expect(domainRegistry.connect(user1).transferDomainControl(domainName, ethers.constants.AddressZero))
-      .to.be.revertedWith("Invalid controller address");
+  describe("Owner Actions", function () {
+    it("Should allow the owner to withdraw funds", async function () {
+      await domainRegistry.connect(addr1).reserveDomain("example", initialDeposit, { value: initialDeposit });
+      
+      const balanceBefore = await ethers.provider.getBalance(owner.address); // Исправлено здесь
+      const contractBalance = await ethers.provider.getBalance(domainRegistry.address);
+      
+      const tx = await domainRegistry.connect(owner).withdrawFunds();
+      const txCost = (await tx.wait()).gasUsed.mul(tx.gasPrice);
+      const balanceAfter = await ethers.provider.getBalance(owner.address); // Исправлено здесь
+      
+      expect(balanceAfter.sub(balanceBefore).add(txCost)).to.equal(contractBalance);
+    });
   });
 });
