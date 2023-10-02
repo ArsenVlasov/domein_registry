@@ -5,8 +5,8 @@ import "hardhat/console.sol";
 import "./Ownable.sol";
 
 contract DomainRegistry is Ownable {
-    uint256 public totalDomains;
-    uint256 public totalReservedDomains;
+    uint256 private totalReservedDomains;
+    uint256 private minDeposit;
 
     struct Domain {
         address controller;
@@ -20,52 +20,56 @@ contract DomainRegistry is Ownable {
     event DomainControlTransferred(string indexed domainName, address indexed newController);
     event DomainReleased(string indexed domainName, address indexed controller, uint256 refundAmount);
 
-    constructor() {}
+    constructor(uint256 _minDeposit) {
+        minDeposit = _minDeposit;
+    }
 
-    function reserveDomain(string memory domainName, uint256 initialDeposit) public payable {
-        require(msg.value >= initialDeposit, "Insufficient initial deposit");
+    modifier onlyController(string memory domainName) {
+        require(domains[domainName].controller == msg.sender, "Only the domain controller can execute it");
+        _;
+    }
+
+    modifier sufficientDeposit(uint256 amount) {
+        require(msg.value >= amount, "Insufficient deposit amount");
+        _;
+    }
+
+    function reserveDomain(string memory domainName) public payable sufficientDeposit(minDeposit) {
         require(domains[domainName].controller == address(0), "Domain already reserved");
         require(isTopLevelDomain(domainName), "Domain name must be a top-level domain");
 
         domains[domainName] = Domain({
             controller: msg.sender,
-            deposit: initialDeposit
+            deposit: msg.value 
         });
-        totalDomains++;
         totalReservedDomains++;
-        
-        emit DomainReserved(domainName, msg.sender, initialDeposit);
+
+        emit DomainReserved(domainName, msg.sender, msg.value);
     }
 
     function isTopLevelDomain(string memory domainName) private pure returns (bool) {
-    bytes memory domainBytes = bytes(domainName);
-    for(uint i = 0; i < domainBytes.length; i++) {
-        if(domainBytes[i] == '.') {
-            return false;
+        bytes memory domainBytes = bytes(domainName);
+        for (uint i = 0; i < domainBytes.length; i++) {
+            if (domainBytes[i] == '.') {
+                return false;
+            }
         }
-    }
-    return true;
-    }
-
-    function changeDeposit(string memory domainName, uint256 newDeposit) public payable {
-        require(domains[domainName].controller == msg.sender, "Only the domain controller can change deposit");
-        require(msg.value >= newDeposit, "Insufficient deposit amount");
-
-        domains[domainName].deposit = newDeposit;
-        emit DepositChanged(domainName, newDeposit);
+        return true;
     }
 
-    function transferDomainControl(string memory domainName, address newController) public {
-        require(domains[domainName].controller == msg.sender, "Only the domain controller can transfer control");
+    function changeDeposit(string memory domainName, uint256 newDeposit) public payable onlyController(domainName) sufficientDeposit(newDeposit) {
+        domains[domainName].deposit = msg.value;
+        emit DepositChanged(domainName, msg.value);
+    }
+
+    function transferDomainControl(string memory domainName, address newController) public onlyController(domainName) {
         require(newController != address(0), "Invalid controller address");
 
         domains[domainName].controller = newController;
         emit DomainControlTransferred(domainName, newController);
     }
 
-    function releaseDomain(string memory domainName) public {
-        require(domains[domainName].controller == msg.sender, "Only the domain controller can release the domain");
-
+    function releaseDomain(string memory domainName) public onlyController(domainName) {
         address payable controller = payable(msg.sender);
         uint256 refundAmount = domains[domainName].deposit;
 
@@ -84,19 +88,7 @@ contract DomainRegistry is Ownable {
         return domains[domainName].deposit;
     }
 
-    function getTotalDomains() public view returns (uint256) {
-        return totalDomains;
-    }
-
     function getTotalReservedDomains() public view returns (uint256) {
         return totalReservedDomains;
-    }
-
-    function withdrawFunds() public onlyOwner payable {
-        address payable contractOwner = payable(owner);
-        uint256 balance = address(this).balance;
-        require(balance > 0, "No funds to withdraw");
-
-        contractOwner.transfer(balance);
     }
 }

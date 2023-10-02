@@ -6,11 +6,8 @@
   "scripts": {
     "hardhat:node": "hardhat node",
     "hardhat:compile": "hardhat compile",
-    "hardhat:compile:force": "hardhat compile --force",
     "hardhat:test": "hardhat test",
-    "hardhat:test:gas": "REPORT_GAS=true COINMARKETCAP_API_KEY=$(security find-generic-password -w -s 'Coinmarketcap API Key') hardhat test",
-    "hardhat:deploy": "hardhat run scripts/deploy.js --network localhost",
-    "hardhat:deploy:sepolia": "MNEMONIC=$(security find-generic-password -w -s 'Seed Phrase (for Testnets)') INFURA_API_KEY=$(security find-generic-password -w -s 'Infura API key (Solidity Courses)') hardhat run scripts/deploy.js --network sepolia"
+    "hardhat:deploy": "hardhat run scripts/DomainRegistry.js --network localhost"
   },
   "repository": {
     "type": "git",
