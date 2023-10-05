@@ -3,6 +3,7 @@ pragma solidity ^0.8.9;
 
 import "hardhat/console.sol";
 import "./Ownable.sol";
+import "./DomainValidator.sol";
 
 contract DomainRegistry is Ownable {
     uint256 private totalReservedDomains;
@@ -20,7 +21,7 @@ contract DomainRegistry is Ownable {
     event DomainControlTransferred(string indexed domainName, address indexed newController);
     event DomainReleased(string indexed domainName, address indexed controller, uint256 refundAmount);
 
-    constructor(uint256 _minDeposit) {
+    constructor(uint256 _minDeposit) payable  {
         minDeposit = _minDeposit;
     }
 
@@ -34,46 +35,70 @@ contract DomainRegistry is Ownable {
         _;
     }
 
-    function reserveDomain(string memory domainName) public payable sufficientDeposit(minDeposit) {
-        require(domains[domainName].controller == address(0), "Domain already reserved");
-        require(isTopLevelDomain(domainName), "Domain name must be a top-level domain");
+    function reserveDomain(string memory domainName) public payable  {
+        string memory cleanDomainName = DomainValidator.stripProtocolOnlyAssembly(domainName);
+        require(DomainValidator.isValidDomain(cleanDomainName), "Invalid domain name format");
+        require(hasValidParentDomain(cleanDomainName), "Parent domain must exist");
+        require(domains[cleanDomainName].controller == address(0), "Domain already reserved");
 
-        domains[domainName] = Domain({
+        domains[cleanDomainName] = Domain({
             controller: msg.sender,
             deposit: msg.value 
         });
         totalReservedDomains++;
 
-        emit DomainReserved(domainName, msg.sender, msg.value);
+        emit DomainReserved(cleanDomainName, msg.sender, msg.value);
     }
 
-    function isTopLevelDomain(string memory domainName) private pure returns (bool) {
-        bytes memory domainBytes = bytes(domainName);
-        for (uint i = 0; i < domainBytes.length; i++) {
-            if (domainBytes[i] == '.') {
-                return false;
-            }
+    function reserveDomainOnlyAssymbly(string memory domainName) public payable  {
+        string memory cleanDomainName = DomainValidator.stripProtocolOnlyAssembly(domainName);
+        require(DomainValidator.isValidDomain(cleanDomainName), "Invalid domain name format");
+        require(hasValidParentDomain(cleanDomainName), "Parent domain must exist");
+        require(domains[cleanDomainName].controller == address(0), "Domain already reserved");
+
+        domains[cleanDomainName] = Domain({
+            controller: msg.sender,
+            deposit: msg.value 
+        });
+        totalReservedDomains++;
+
+        emit DomainReserved(cleanDomainName, msg.sender, msg.value);
+    }
+
+    function hasValidParentDomain(string memory domainName) private view returns (bool) {
+        string memory parentDomain = DomainValidator.getParentDomain(domainName);
+        if(bytes(parentDomain).length == 0) {
+            return true;
         }
-        return true;
+        return domains[parentDomain].controller != address(0);
+    }
+
+
+    function isDomainRegistered(string memory domainName) external view returns (bool) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        return domains[cleanDomainName].controller != address(0);
     }
 
     function changeDeposit(string memory domainName, uint256 newDeposit) public payable onlyController(domainName) sufficientDeposit(newDeposit) {
-        domains[domainName].deposit = msg.value;
-        emit DepositChanged(domainName, msg.value);
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        domains[cleanDomainName].deposit = msg.value;
+        emit DepositChanged(cleanDomainName, msg.value);
     }
 
     function transferDomainControl(string memory domainName, address newController) public onlyController(domainName) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
         require(newController != address(0), "Invalid controller address");
 
-        domains[domainName].controller = newController;
-        emit DomainControlTransferred(domainName, newController);
+        domains[cleanDomainName].controller = newController;
+        emit DomainControlTransferred(cleanDomainName, newController);
     }
 
     function releaseDomain(string memory domainName) public onlyController(domainName) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
         address payable controller = payable(msg.sender);
-        uint256 refundAmount = domains[domainName].deposit;
+        uint256 refundAmount = domains[cleanDomainName].deposit;
 
-        delete domains[domainName];
+        delete domains[cleanDomainName];
         totalReservedDomains--;
         controller.transfer(refundAmount);
 
@@ -81,11 +106,13 @@ contract DomainRegistry is Ownable {
     }
 
     function getDomainController(string memory domainName) public view returns (address) {
-        return domains[domainName].controller;
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        return domains[cleanDomainName].controller;
     }
 
     function getDomainDeposit(string memory domainName) public view returns (uint256) {
-        return domains[domainName].deposit;
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        return domains[cleanDomainName].deposit;
     }
 
     function getTotalReservedDomains() public view returns (uint256) {
