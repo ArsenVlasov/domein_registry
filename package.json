@@ -1,0 +1,30 @@
+{
+  "name": "domein_registry",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "hardhat:node": "hardhat node",
+    "hardhat:compile": "hardhat compile",
+    "hardhat:test": "hardhat test",
+    "hardhat:deploy": "hardhat run scripts/DomainRegistry.js --network localhost"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArsenVlasov/domein_registry.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ArsenVlasov/domein_registry/issues"
+  },
+  "homepage": "https://github.com/ArsenVlasov/domein_registry#readme",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "hardhat": "^2.17.4"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^6.7.1"
+  }
+}
