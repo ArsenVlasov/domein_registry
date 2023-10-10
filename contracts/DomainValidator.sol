@@ -8,16 +8,7 @@ library DomainValidator {
         if (domainBytes.length < 8) {
             return domainName;
         }
-        if (
-            domainBytes[0] == "h" &&
-            domainBytes[1] == "t" &&
-            domainBytes[2] == "t" &&
-            domainBytes[3] == "p" &&
-            domainBytes[4] == "s" &&
-            domainBytes[5] == ":" &&
-            domainBytes[6] == "/" &&
-            domainBytes[7] == "/"
-        ) {
+        if (domainBytes[5] == ':' && domainBytes[6] == '/' && domainBytes[7] == '/')  {
             bytes memory strippedBytes = new bytes(domainBytes.length - 8);
             for (uint i = 8; i < domainBytes.length; i++) {
                 strippedBytes[i - 8] = domainBytes[i];
@@ -27,48 +18,6 @@ library DomainValidator {
 
         return domainName;
     }
-
-    function stripProtocolOnlyAssembly(string memory domainName) public pure returns (string memory) {
-        bytes memory domainBytes = bytes(domainName);
-        if (domainBytes.length < 8) {
-            return domainName;
-        }
-
-        bool isHttps;
-        
-        assembly {
-            let ptr := add(domainBytes, 0x20)
-            isHttps := and(
-                and(
-                    and(
-                        eq(mload(ptr), 0x6874747073),
-                        eq(and(mload(add(ptr, 0x3)), 0xFFFFFF), 0x3a2f2f)
-                    ),
-                    gt(mload(domainBytes), 7)
-                ),
-                lt(mload(domainBytes), 0xFFFFFFFFFFFFFFFF)
-            )
-        }
-        
-        if (isHttps) {
-            bytes memory strippedBytes = new bytes(domainBytes.length - 8);
-            assembly {
-                let source := add(add(domainBytes, 0x20), 8)
-                let destination := add(strippedBytes, 0x20)
-                let end := add(source, sub(mload(domainBytes), 8))
-                
-                for { } lt(source, end) { }
-                {
-                    mstore(destination, mload(source))
-                    source := add(source, 0x20)
-                    destination := add(destination, 0x20)
-                }
-            }
-            return string(strippedBytes);
-        }
-        return domainName;
-    }
-
 
     function splitDomain(string memory domainName) internal pure returns (string[] memory) {
         bytes memory domainBytes = bytes(domainName);
@@ -95,86 +44,12 @@ library DomainValidator {
         }
         return parts;
     }
-
-    function splitDomainOnlyAssembly(string memory domainName) internal pure returns (string[] memory) {
-        string[] memory parts;
-        assembly {
-            let count := 1
-            let domainPtr := add(domainName, 0x20) 
-            let endPtr := add(domainPtr, mload(domainName)) 
-            for {
-                let currPtr := domainPtr
-            } lt(currPtr, endPtr) {
-                currPtr := add(currPtr, 1)
-            } {
-                if eq(byte(0, mload(currPtr)), 0x2e) {
-                    
-                    count := add(count, 1)
-                }
-            }
-
-            parts := msize() 
-            mstore(parts, count) 
-            let partsData := add(parts, 0x20) 
-
-            let start := domainPtr
-            let index := 0
-
-            for {
-                let currPtr := domainPtr
-            } lt(currPtr, endPtr) {
-                currPtr := add(currPtr, 1)
-            } {
-                if or(
-                    eq(byte(0, mload(currPtr)), 0x2e),
-                    eq(add(currPtr, 1), endPtr)
-                ) {
-                    
-                    let length := sub(currPtr, start)
-                    if eq(add(currPtr, 1), endPtr) {
-                        length := add(length, 1)
-                    }
-                    mstore(add(partsData, mul(index, 0x20)), length)
-                    for {
-                        let i := 0
-                    } lt(i, length) {
-                        i := add(i, 1)
-                    } {
-                        mstore8(
-                            add(add(partsData, mul(index, 0x20)), add(i, 0x20)),
-                            byte(0, mload(add(start, i)))
-                        )
-                    }
-                    start := add(currPtr, 1)
-                    index := add(index, 1)
-                }
-            }
-        }
-        return parts;
-    }
-
     
     function getParentDomain(string memory domainName) internal pure returns (string memory) {
         string[] memory parts = splitDomain(domainName);
         if (parts.length <= 2) {
             return "";
         }
-
-        string memory parentDomain = parts[1];
-        for (uint i = 2; i < parts.length; i++) {
-            parentDomain = string(
-                abi.encodePacked(parentDomain, ".", parts[i])
-            );
-        }
-        return parentDomain;
-    }
-
-    function getParentDomainAssembly(string memory domainName) internal pure returns (string memory) {
-        string[] memory parts = splitDomainOnlyAssembly(domainName);
-        if (parts.length <= 2) {
-            return "";
-        }
-
         string memory parentDomain = parts[1];
         for (uint i = 2; i < parts.length; i++) {
             parentDomain = string(
@@ -200,9 +75,14 @@ library DomainValidator {
         ) {
             return false;
         }
+            
         bool dotFound = false;
         for (uint i = 0; i < domainBytes.length; i++) {
             if (domainBytes[i] == ".") {
+                if (i > 0 && domainBytes[i - 1] == ".") {
+                    // Two consecutive dots found
+                    return false;
+                }
                 dotFound = true;
                 continue;
             }
@@ -210,8 +90,58 @@ library DomainValidator {
                 return false;
             }
         }
-
         return dotFound;
     }
 
+
+    // function isValidDomain(string memory domainName) internal pure returns (bool) {
+    //     assembly {
+    //         let domainBytes := add(domainName, 0x20)
+    //         let end := add(domainBytes, mload(domainName))
+            
+    //         if iszero(mload(domainName)) {
+    //             mstore(0x00, 0)
+    //             return(0x00, 0x20)
+    //         }
+    //         if or(eq(byte(0, mload(domainBytes)), "."), eq(byte(0, mload(sub(end, 1))), ".")) {
+    //             mstore(0x00, 0)
+    //             return(0x00, 0x20)
+    //         }
+
+    //         let dotFound := 0
+    //         let lastChar := byte(0, mload(domainBytes))
+            
+    //         for { let i := add(domainBytes, 1) } lt(i, end) { i := add(i, 1) } {
+    //             if and(eq(byte(0, mload(i)), "."), eq(lastChar, ".")) {
+    //                 mstore(0x00, 0)
+    //                 return(0x00, 0x20)
+    //             }
+
+    //             if eq(byte(0, mload(i)), ".") {
+    //                 dotFound := 1
+    //                 lastChar := byte(0, mload(i))
+    //                 continue
+    //             }
+    //             let charCode := byte(0, mload(i))
+    //             let conditionA := and(iszero(slt(sub(charCode, 65), 0)), iszero(slt(sub(90, charCode), 0)))
+    //             let conditionB := and(iszero(slt(sub(charCode, 97), 0)), iszero(slt(sub(122, charCode), 0)))
+    //             let conditionC := and(iszero(slt(sub(charCode, 48), 0)), iszero(slt(sub(57, charCode), 0)))
+    //             let conditionD := eq(charCode, 45)
+
+    //             if or(or(conditionA, conditionB), or(conditionC, conditionD)) {
+    //                 mstore(0x00, 0)
+    //                 return(0x00, 0x20)
+    //             }
+    //         }
+
+    //         if iszero(dotFound) {
+    //             mstore(0x00, 0)
+    //             return(0x00, 0x20)
+    //         }
+    //         mstore(0x00, 1)
+    //         return(0x00, 0x20)
+    //     }
+    // }
+
 }
+

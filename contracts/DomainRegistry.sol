@@ -4,6 +4,7 @@ pragma solidity ^0.8.9;
 import "hardhat/console.sol";
 import "./Ownable.sol";
 import "./DomainValidator.sol";
+import "./ChildDomainManager.sol";
 
 contract DomainRegistry is Ownable {
     uint256 private totalReservedDomains;
@@ -15,6 +16,7 @@ contract DomainRegistry is Ownable {
     }
 
     mapping(string => Domain) private domains;
+    ChildDomainManager private childManager;
 
     event DomainReserved(string indexed domainName, address indexed controller, uint256 deposit);
     event DepositChanged(string indexed domainName, uint256 newDeposit);
@@ -23,6 +25,7 @@ contract DomainRegistry is Ownable {
 
     constructor(uint256 _minDeposit) payable  {
         minDeposit = _minDeposit;
+        childManager = new ChildDomainManager();
     }
 
     modifier onlyController(string memory domainName) {
@@ -35,10 +38,10 @@ contract DomainRegistry is Ownable {
         _;
     }
 
-    function reserveDomain(string memory domainName) public payable  {
-        string memory cleanDomainName = DomainValidator.stripProtocolOnlyAssembly(domainName);
+    function reserveDomain(string memory domainName) public payable sufficientDeposit(minDeposit) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
         require(DomainValidator.isValidDomain(cleanDomainName), "Invalid domain name format");
-        require(hasValidParentDomain(cleanDomainName), "Parent domain must exist");
+        require(hasParentDomain(cleanDomainName), "Parent domain must exist");
         require(domains[cleanDomainName].controller == address(0), "Domain already reserved");
 
         domains[cleanDomainName] = Domain({
@@ -46,33 +49,15 @@ contract DomainRegistry is Ownable {
             deposit: msg.value 
         });
         totalReservedDomains++;
+        addDomainToChildManager(cleanDomainName);
 
         emit DomainReserved(cleanDomainName, msg.sender, msg.value);
     }
 
-    function reserveDomainOnlyAssymbly(string memory domainName) public payable  {
-        string memory cleanDomainName = DomainValidator.stripProtocolOnlyAssembly(domainName);
-        require(DomainValidator.isValidDomain(cleanDomainName), "Invalid domain name format");
-        require(hasValidParentDomain(cleanDomainName), "Parent domain must exist");
-        require(domains[cleanDomainName].controller == address(0), "Domain already reserved");
-
-        domains[cleanDomainName] = Domain({
-            controller: msg.sender,
-            deposit: msg.value 
-        });
-        totalReservedDomains++;
-
-        emit DomainReserved(cleanDomainName, msg.sender, msg.value);
-    }
-
-    function hasValidParentDomain(string memory domainName) private view returns (bool) {
+    function hasParentDomain(string memory domainName) private view returns (bool) {
         string memory parentDomain = DomainValidator.getParentDomain(domainName);
-        if(bytes(parentDomain).length == 0) {
-            return true;
-        }
-        return domains[parentDomain].controller != address(0);
+        return bytes(parentDomain).length == 0 || domains[parentDomain].controller != address(0);
     }
-
 
     function isDomainRegistered(string memory domainName) external view returns (bool) {
         string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
@@ -95,11 +80,13 @@ contract DomainRegistry is Ownable {
 
     function releaseDomain(string memory domainName) public onlyController(domainName) {
         string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        require(!hasChildDomain(cleanDomainName), "Remove child domains first");
         address payable controller = payable(msg.sender);
         uint256 refundAmount = domains[cleanDomainName].deposit;
 
         delete domains[cleanDomainName];
         totalReservedDomains--;
+        removeDomainFromChildManager(cleanDomainName);
         controller.transfer(refundAmount);
 
         emit DomainReleased(domainName, msg.sender, refundAmount);
@@ -118,4 +105,23 @@ contract DomainRegistry is Ownable {
     function getTotalReservedDomains() public view returns (uint256) {
         return totalReservedDomains;
     }
+
+    function addDomainToChildManager(string memory cleanDomainName) private {
+        string memory parentDomain = DomainValidator.getParentDomain(cleanDomainName);
+        if (bytes(parentDomain).length > 0) {
+            childManager.addChildDomain(parentDomain, cleanDomainName);
+        }
+    }
+
+    function removeDomainFromChildManager(string memory cleanDomainName) private {
+        string memory parentDomain = DomainValidator.getParentDomain(cleanDomainName);
+        if (bytes(parentDomain).length > 0) {
+            childManager.removeChildDomain(parentDomain, cleanDomainName);
+        }
+    }
+
+    function hasChildDomain(string memory domainName) private view returns (bool) {
+        return childManager.hasChildDomain(domainName);
+    }
 }
+
