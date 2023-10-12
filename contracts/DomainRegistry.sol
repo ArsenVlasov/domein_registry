@@ -17,7 +17,6 @@ contract DomainRegistry is Ownable {
 
     mapping(string => Domain) domains;
 
-
     constructor(uint256 _minDeposit) payable {
         minDeposit = _minDeposit;
     }
@@ -32,7 +31,7 @@ contract DomainRegistry is Ownable {
         _;
     }
 
-    function reserveDomain(string memory domainName) public payable sufficientDeposit(minDeposit){
+    function reserveDomain(string memory domainName) public payable {
         string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
         require(DomainValidator.isValidDomain(cleanDomainName),"Invalid domain name format");
         require(domains[cleanDomainName].controller == address(0),"Domain already reserved");
@@ -112,17 +111,4 @@ contract DomainRegistry is Ownable {
         domains[cleanDomainName].controller = newController;
     }
 
-    function getDomainController(string memory domainName) public view returns (address) {
-        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
-        return domains[cleanDomainName].controller;
-    }
-
-    function getDomainDeposit(string memory domainName) public view returns (uint256) {
-        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
-        return domains[cleanDomainName].deposit;
-    }
-
-    function getTotalReservedDomains() public view returns (uint256) {
-        return totalReservedDomains;
-    }
 }
