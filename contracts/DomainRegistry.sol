@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.18;
 
 import "hardhat/console.sol";
 import "./Ownable.sol";
+import "./DomainValidator.sol";
 
 contract DomainRegistry is Ownable {
     uint256 private totalReservedDomains;
@@ -11,21 +12,17 @@ contract DomainRegistry is Ownable {
     struct Domain {
         address controller;
         uint256 deposit;
+        bytes32[] childDomains;
     }
 
-    mapping(string => Domain) private domains;
+    mapping(string => Domain) domains;
 
-    event DomainReserved(string indexed domainName, address indexed controller, uint256 deposit);
-    event DepositChanged(string indexed domainName, uint256 newDeposit);
-    event DomainControlTransferred(string indexed domainName, address indexed newController);
-    event DomainReleased(string indexed domainName, address indexed controller, uint256 refundAmount);
-
-    constructor(uint256 _minDeposit) {
+    constructor(uint256 _minDeposit) payable {
         minDeposit = _minDeposit;
     }
 
     modifier onlyController(string memory domainName) {
-        require(domains[domainName].controller == msg.sender, "Only the domain controller can execute it");
+        require(domains[domainName].controller == msg.sender,"Only the domain controller can execute it");
         _;
     }
 
@@ -34,61 +31,84 @@ contract DomainRegistry is Ownable {
         _;
     }
 
-    function reserveDomain(string memory domainName) public payable sufficientDeposit(minDeposit) {
-        require(domains[domainName].controller == address(0), "Domain already reserved");
-        require(isTopLevelDomain(domainName), "Domain name must be a top-level domain");
+    function reserveDomain(string memory domainName) public payable {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        require(DomainValidator.isValidDomain(cleanDomainName),"Invalid domain name format");
+        require(domains[cleanDomainName].controller == address(0),"Domain already reserved");
 
-        domains[domainName] = Domain({
-            controller: msg.sender,
-            deposit: msg.value 
-        });
-        totalReservedDomains++;
+        string memory parentDomain = DomainValidator.getParentDomain(cleanDomainName); 
+        require(keccak256(abi.encodePacked(parentDomain)) == keccak256(abi.encodePacked("")) || domains[parentDomain].controller != address(0), "Parent domain must exist");
 
-        emit DomainReserved(domainName, msg.sender, msg.value);
-    }
-
-    function isTopLevelDomain(string memory domainName) private pure returns (bool) {
-        bytes memory domainBytes = bytes(domainName);
-        for (uint i = 0; i < domainBytes.length; i++) {
-            if (domainBytes[i] == '.') {
-                return false;
-            }
+        if (keccak256(abi.encodePacked(parentDomain)) != keccak256(abi.encodePacked("")) && domains[parentDomain].controller != address(0)) {
+            domains[parentDomain].childDomains.push(keccak256(abi.encodePacked(cleanDomainName)));
         }
-        return true;
-    }
 
-    function changeDeposit(string memory domainName, uint256 newDeposit) public payable onlyController(domainName) sufficientDeposit(newDeposit) {
-        domains[domainName].deposit = msg.value;
-        emit DepositChanged(domainName, msg.value);
-    }
-
-    function transferDomainControl(string memory domainName, address newController) public onlyController(domainName) {
-        require(newController != address(0), "Invalid controller address");
-
-        domains[domainName].controller = newController;
-        emit DomainControlTransferred(domainName, newController);
+        domains[cleanDomainName] = Domain({
+            controller: msg.sender,
+            deposit: msg.value,
+            childDomains: new bytes32[](0)
+        });
     }
 
     function releaseDomain(string memory domainName) public onlyController(domainName) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        require(domains[cleanDomainName].childDomains.length == 0,"Remove child domains first");
+        require(domains[cleanDomainName].controller != address(0),"Domain is not reserved");
+
+        removeChildFromParentDomain(cleanDomainName);
+
         address payable controller = payable(msg.sender);
-        uint256 refundAmount = domains[domainName].deposit;
+        uint256 refundAmount = domains[cleanDomainName].deposit;
+        delete domains[cleanDomainName];
 
-        delete domains[domainName];
-        totalReservedDomains--;
         controller.transfer(refundAmount);
-
-        emit DomainReleased(domainName, msg.sender, refundAmount);
     }
 
-    function getDomainController(string memory domainName) public view returns (address) {
-        return domains[domainName].controller;
+    function removeChildFromParentDomain(string memory childDomain) private {
+        string memory parentDomain = DomainValidator.getParentDomain(childDomain);
+        bytes32 hashedChild = keccak256(abi.encodePacked(childDomain));
+        bytes32 hashedParent = keccak256(abi.encodePacked(parentDomain));
+
+        if (hashedParent != keccak256(abi.encodePacked("")) &&domains[parentDomain].controller != address(0)) {
+            bytes32[] storage childDomains = domains[parentDomain].childDomains;
+            uint index;
+            bool found = false;
+
+            for (uint i = 0; i < childDomains.length; i++) {
+                if (childDomains[i] == hashedChild) {
+                    index = i;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found) {
+                assembly {
+                    let len := sload(childDomains.slot)
+                    if lt(index, sub(len, 1)) {
+                        let data := add(add(childDomains.slot, 1), index)
+                        let lastElem := add(
+                            add(childDomains.slot, 1),
+                            sub(len, 1)
+                        )
+                        sstore(data, sload(lastElem))
+                    }
+                    sstore(childDomains.slot, sub(len, 1))
+                }
+            }
+        }
     }
 
-    function getDomainDeposit(string memory domainName) public view returns (uint256) {
-        return domains[domainName].deposit;
+    function changeDeposit(string memory domainName, uint256 newDeposit) public payable onlyController(domainName) sufficientDeposit(newDeposit) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        domains[cleanDomainName].deposit = msg.value;
     }
 
-    function getTotalReservedDomains() public view returns (uint256) {
-        return totalReservedDomains;
+    function transferDomainControl(string memory domainName, address newController) public onlyController(domainName) {
+        string memory cleanDomainName = DomainValidator.stripProtocol(domainName);
+        require(newController != address(0), "Invalid controller address");
+
+        domains[cleanDomainName].controller = newController;
     }
+
 }
